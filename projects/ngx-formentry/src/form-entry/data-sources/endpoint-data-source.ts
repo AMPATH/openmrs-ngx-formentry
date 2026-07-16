@@ -6,9 +6,9 @@ import { DataSource } from '../question-models/interfaces/data-source';
 import { Option } from '../question-models/select-option';
 
 /**
- * Schema-configurable options for an {@link EndpointDataSource}. These come from a
- * question's `questionOptions.renderingOptions` (or `questionOptions.dataSourceOptions`)
- * and are mapped onto the question by `QuestionFactory.toCustomApiQuestion`.
+ * Schema-configurable options for an {@link EndpointDataSource}. These come from the
+ * question's data source configuration (`questionOptions.datasource.config`) and are
+ * applied when the built-in `endpoint` data source is used with the `remote-select` control.
  */
 export interface EndpointDataSourceOptions {
   /** REST endpoint returning the list of items to choose from. */
@@ -23,8 +23,11 @@ export interface EndpointDataSourceOptions {
   resultsKey?: string;
   /** Query parameter used for the page size. Defaults to `limit`. */
   limitParam?: string;
-  /** Page size. Only sent when defined. */
+  /** Page size. Defaults to 20. */
   limit?: number;
+  /** Optional URL template used to resolve a saved value. The `{value}` placeholder is
+   * replaced with the URL-encoded stored value. Defaults to `{endpointUrl}/{value}`. */
+  resolveUrlTemplate?: string;
   /** Allows extra, endpoint-specific options and keeps the shape assignable to the
    * `Record<string, unknown>` used by the DataSource contract. */
   [key: string]: unknown;
@@ -37,15 +40,17 @@ interface ResolvedConfig {
   searchParam: string;
   resultsKey: string;
   limitParam: string;
-  limit?: number;
+  limit: number;
+  resolveUrlTemplate?: string;
 }
 
 /**
  * A reusable, inbuilt {@link DataSource} that reads its list of options from an arbitrary
- * REST endpoint declared in the form schema. Unlike the OpenMRS-specific data sources that a
- * consuming app registers by name, this one is instantiated per-question from schema config,
- * which lets it be rendered through the existing `ofe-remote-select` component — gaining
- * search, paging and saved-value resolution without duplicating any control logic.
+ * REST endpoint declared in the form schema. It is registered under the name `endpoint`
+ * (unless the host application claims that name first) and rendered through the existing
+ * `ofe-remote-select` component, with per-question endpoint config supplied via
+ * `dataSourceOptions` — gaining search, paging and saved-value resolution without
+ * duplicating any control logic.
  */
 export class EndpointDataSource implements DataSource {
   public dataSourceOptions: EndpointDataSourceOptions;
@@ -72,18 +77,14 @@ export class EndpointDataSource implements DataSource {
     if (searchText) {
       params = params.set(config.searchParam, searchText);
     }
-    if (typeof config.limit === 'number') {
-      params = params.set(config.limitParam, String(config.limit));
-    }
+    params = params.set(config.limitParam, String(config.limit));
 
+    // Errors are intentionally not caught here so callers can distinguish a failed
+    // request from a successful search that returned no matches (an empty list).
     return this.http.get(config.endpointUrl, { params }).pipe(
       map((response: any) => {
         const items = this.extractArray(response, config.resultsKey);
         return items.map((item) => this.toOption(item, config));
-      }),
-      catchError((error) => {
-        console.error('EndpointDataSource: failed to load options', error);
-        return of([]);
       })
     );
   }
@@ -106,7 +107,13 @@ export class EndpointDataSource implements DataSource {
       return of((undefined as unknown) as Option);
     }
 
-    const url = `${this.trimTrailingSlash(config.endpointUrl)}/${value}`;
+    const encodedValue = encodeURIComponent(String(value));
+    // A saved value is resolved either through an explicit `resolveUrlTemplate` (with a
+    // `{value}` placeholder) or, by convention, by appending the value to the endpoint
+    // URL. The value is URL-encoded so ids containing reserved characters resolve correctly.
+    const url = config.resolveUrlTemplate
+      ? config.resolveUrlTemplate.replace('{value}', encodedValue)
+      : `${this.trimTrailingSlash(config.endpointUrl)}/${encodedValue}`;
     return this.http.get(url).pipe(
       map((response: any) => {
         // Endpoints may return the item directly, wrapped under a results key, or as an array.
@@ -143,7 +150,8 @@ export class EndpointDataSource implements DataSource {
       searchParam: merged.searchParam ?? 'q',
       resultsKey: merged.resultsKey ?? 'results',
       limitParam: merged.limitParam ?? 'limit',
-      limit: merged.limit
+      limit: merged.limit ?? 20,
+      resolveUrlTemplate: merged.resolveUrlTemplate
     };
   }
 

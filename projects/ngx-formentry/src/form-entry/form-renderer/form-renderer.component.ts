@@ -3,6 +3,7 @@ import {
   OnInit,
   Input,
   Inject,
+  Optional,
   OnChanges,
   SimpleChanges,
   TemplateRef
@@ -56,7 +57,7 @@ export class FormRendererComponent implements OnInit, OnChanges {
     private dataSources: DataSources,
     private formErrorsService: FormErrorsService,
     public translate: TranslateService,
-    private http: HttpClient,
+    @Optional() private http: HttpClient,
     @Inject(DOCUMENT) private document: Document
   ) {
     this.activeTab = 0;
@@ -64,7 +65,6 @@ export class FormRendererComponent implements OnInit, OnChanges {
 
   public ngOnInit() {
     this.setUpRemoteSelect();
-    this.setUpCustomApiDropdown();
     this.setUpFileUpload();
     this.loadLabels();
     if (this.node && this.node.form) {
@@ -122,6 +122,8 @@ export class FormRendererComponent implements OnInit, OnChanges {
       this.node.question.extras &&
       this.node.question.renderingType === 'remote-select'
     ) {
+      this.ensureEndpointDataSource();
+
       this.dataSource = this.dataSources.dataSources[
         this.node.question.dataSource
       ];
@@ -132,17 +134,19 @@ export class FormRendererComponent implements OnInit, OnChanges {
     }
   }
 
-  public setUpCustomApiDropdown() {
+  // Registers the built-in `endpoint` data source on demand, but only when the host
+  // application hasn't already claimed the name and an HttpClient is available. Per-question
+  // endpoint config is supplied through `dataSourceOptions`, so a single shared instance is
+  // sufficient. Host-registered data sources always take precedence.
+  private ensureEndpointDataSource() {
     if (
-      this.node &&
-      this.node.question.extras &&
-      this.node.question.renderingType === 'custom-api-dropdown'
+      this.node.question.dataSource === 'endpoint' &&
+      !this.dataSources.dataSources['endpoint'] &&
+      this.http
     ) {
-      // Instantiate a fresh endpoint data source per question so that concurrent
-      // custom-api-dropdown controls with different endpoints don't share config.
-      this.dataSource = new EndpointDataSource(
-        this.http,
-        this.node.question.dataSourceOptions as any
+      this.dataSources.registerDataSource(
+        'endpoint',
+        new EndpointDataSource(this.http, {} as any)
       );
     }
   }

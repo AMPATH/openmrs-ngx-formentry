@@ -85,7 +85,7 @@ describe('RemoteSelectComponent', () => {
     expect(dataSource.searchOptions).toHaveBeenCalledWith('', options);
   });
 
-  // --- ControlValueAccessor contract (relied on by the custom-api-dropdown control) ---
+  // --- ControlValueAccessor contract ---
 
   it('creates an instance', () => {
     expect(createComponent()).toBeTruthy();

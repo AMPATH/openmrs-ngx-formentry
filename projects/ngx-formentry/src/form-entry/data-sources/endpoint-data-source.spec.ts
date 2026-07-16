@@ -99,6 +99,31 @@ describe('EndpointDataSource', () => {
     req.flush({ results: [] });
   });
 
+  it('sends a default limit of 20 when none is configured', () => {
+    const ds = new EndpointDataSource(http, { endpointUrl });
+    ds.searchOptions('john').subscribe();
+
+    const req = httpMock.expectOne((r) => r.url === endpointUrl);
+    expect(req.request.params.get('limit')).toBe('20');
+    req.flush({ results: [] });
+  });
+
+  it('emits an empty array (not an error) for a successful search with no matches', () => {
+    const ds = new EndpointDataSource(http, { endpointUrl });
+    let nextResult: any;
+    let errored = false;
+    ds.searchOptions('nobody').subscribe({
+      next: (r) => (nextResult = r),
+      error: () => (errored = true)
+    });
+
+    const req = httpMock.expectOne((r) => r.url === endpointUrl);
+    req.flush({ results: [] });
+
+    expect(errored).toBe(false);
+    expect(nextResult).toEqual([]);
+  });
+
   it('resolves a saved value to a single option (saved-value resolution)', () => {
     const ds = new EndpointDataSource(http, {
       endpointUrl,
@@ -118,15 +143,58 @@ describe('EndpointDataSource', () => {
     });
   });
 
-  it('returns an empty array when a search request errors', () => {
+  it('propagates the error when a search request fails (distinct from an empty result)', () => {
     const ds = new EndpointDataSource(http, { endpointUrl });
-    let result: any;
-    ds.searchOptions('').subscribe((r) => (result = r));
+    let nextResult: any;
+    let errorResponse: any;
+    ds.searchOptions('').subscribe({
+      next: (r) => (nextResult = r),
+      error: (e) => (errorResponse = e)
+    });
 
     const req = httpMock.expectOne((r) => r.url === endpointUrl);
     req.flush('boom', { status: 500, statusText: 'Server Error' });
 
-    expect(result).toEqual([]);
+    expect(nextResult).toBeUndefined();
+    expect(errorResponse).toBeDefined();
+    expect(errorResponse.status).toBe(500);
+  });
+
+  it('URL-encodes the saved value when resolving it', () => {
+    const ds = new EndpointDataSource(http, { endpointUrl });
+    let result: any;
+    ds.resolveSelectedValue('a/b c&d').subscribe((r) => (result = r));
+
+    const req = httpMock.expectOne(
+      (r) => r.url === `${endpointUrl}/a%2Fb%20c%26d`
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush({ uuid: 'a/b c&d', display: 'Weird Id' });
+
+    expect({ value: result.value, label: result.label }).toEqual({
+      value: 'a/b c&d',
+      label: 'Weird Id'
+    });
+  });
+
+  it('resolves a saved value through a resolveUrlTemplate, encoding the value', () => {
+    const ds = new EndpointDataSource(http, {
+      endpointUrl,
+      resolveUrlTemplate: `${endpointUrl}/lookup/{value}`
+    });
+    let result: any;
+    ds.resolveSelectedValue('a b').subscribe((r) => (result = r));
+
+    const req = httpMock.expectOne(
+      (r) => r.url === `${endpointUrl}/lookup/a%20b`
+    );
+    expect(req.request.method).toBe('GET');
+    req.flush({ uuid: 'a b', display: 'Templated' });
+
+    expect({ value: result.value, label: result.label }).toEqual({
+      value: 'a b',
+      label: 'Templated'
+    });
   });
 
   it('resolves to undefined without a request for an empty saved value', () => {
